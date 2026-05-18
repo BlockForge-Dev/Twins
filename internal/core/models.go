@@ -5,8 +5,12 @@ import "time"
 const (
 	PaymentStatusAwaitingPayment = "awaiting_payment"
 
-	ChainSolana = "solana"
-	TokenUSDC   = "USDC"
+	TransactionStatusPendingFinality  = "pending_finality"
+	TransactionStatusConfirmedOnchain = "confirmed_onchain"
+
+	ChainSolana    = "solana"
+	TokenUSDC      = "USDC"
+	SolanaUSDCMint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 )
 
 type Business struct {
@@ -54,6 +58,29 @@ type PaymentRequest struct {
 	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
+type StablecoinTransaction struct {
+	ID                 string    `json:"id"`
+	BusinessID         string    `json:"business_id"`
+	WalletID           string    `json:"wallet_id"`
+	Chain              string    `json:"chain"`
+	Signature          string    `json:"signature"`
+	Slot               uint64    `json:"slot"`
+	BlockTime          *int64    `json:"block_time,omitempty"`
+	ConfirmationStatus string    `json:"confirmation_status"`
+	SourceAddress      string    `json:"source_address"`
+	SourceOwner        string    `json:"source_owner,omitempty"`
+	DestinationAddress string    `json:"destination_address"`
+	DestinationOwner   string    `json:"destination_owner"`
+	Token              string    `json:"token"`
+	Mint               string    `json:"mint"`
+	Amount             string    `json:"amount"`
+	AmountAtomic       string    `json:"amount_atomic"`
+	Decimals           uint8     `json:"decimals"`
+	Status             string    `json:"status"`
+	DetectedAt         time.Time `json:"detected_at"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
 type AuditLog struct {
 	ID           string            `json:"id"`
 	BusinessID   string            `json:"business_id"`
@@ -96,4 +123,26 @@ type CreatePaymentRequestInput struct {
 type CreatePaymentRequestResult struct {
 	PaymentRequest     PaymentRequest `json:"payment_request"`
 	IdempotentReplayed bool           `json:"idempotent_replayed"`
+}
+
+type IngestStablecoinTransactionInput struct {
+	Chain              string `json:"chain"`
+	Signature          string `json:"signature"`
+	Slot               uint64 `json:"slot"`
+	BlockTime          *int64 `json:"block_time,omitempty"`
+	ConfirmationStatus string `json:"confirmation_status"`
+	SourceAddress      string `json:"source_address"`
+	SourceOwner        string `json:"source_owner,omitempty"`
+	DestinationAddress string `json:"destination_address"`
+	DestinationOwner   string `json:"destination_owner"`
+	Token              string `json:"token"`
+	Mint               string `json:"mint"`
+	Amount             string `json:"amount"`
+	AmountAtomic       string `json:"amount_atomic"`
+	Decimals           uint8  `json:"decimals"`
+}
+
+type IngestStablecoinTransactionResult struct {
+	StablecoinTransaction StablecoinTransaction `json:"stablecoin_transaction"`
+	DuplicateReplayed     bool                  `json:"duplicate_replayed"`
 }

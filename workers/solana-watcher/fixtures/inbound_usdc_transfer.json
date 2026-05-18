@@ -1,0 +1,78 @@
+{
+  "slot": 123456,
+  "blockTime": 1779293456,
+  "transaction": {
+    "signatures": [
+      "5LqMEXAMPLE111111111111111111111111111111111111111111111111111"
+    ],
+    "message": {
+      "accountKeys": [
+        {
+          "pubkey": "9xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDK"
+        },
+        {
+          "pubkey": "8xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDJ"
+        },
+        {
+          "pubkey": "6xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDG"
+        },
+        {
+          "pubkey": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDH"
+        }
+      ],
+      "instructions": []
+    }
+  },
+  "meta": {
+    "err": null,
+    "preTokenBalances": [
+      {
+        "accountIndex": 1,
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "owner": "9xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDK",
+        "uiTokenAmount": {
+          "amount": "1000000000",
+          "decimals": 6,
+          "uiAmountString": "1000"
+        }
+      }
+    ],
+    "postTokenBalances": [
+      {
+        "accountIndex": 2,
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "owner": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDH",
+        "uiTokenAmount": {
+          "amount": "500000000",
+          "decimals": 6,
+          "uiAmountString": "500"
+        }
+      }
+    ],
+    "innerInstructions": [
+      {
+        "index": 0,
+        "instructions": [
+          {
+            "program": "spl-token",
+            "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "parsed": {
+              "type": "transferChecked",
+              "info": {
+                "source": "8xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDJ",
+                "destination": "6xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDG",
+                "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "tokenAmount": {
+                  "amount": "500000000",
+                  "decimals": 6,
+                  "uiAmountString": "500"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
+

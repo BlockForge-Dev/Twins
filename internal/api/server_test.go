@@ -56,10 +56,37 @@ func TestMilestone2HTTPFlow(t *testing.T) {
 		t.Fatalf("len(payment_requests) = %d, want 1", len(requests))
 	}
 
+	transactionBody := postJSON(t, handler, "/v1/stablecoin-transactions", apiKey, "", map[string]any{
+		"chain":               "solana",
+		"signature":           "5LqMEXAMPLE111111111111111111111111111111111111111111111111111",
+		"slot":                123456,
+		"block_time":          1779293456,
+		"confirmation_status": "finalized",
+		"source_address":      "8xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDJ",
+		"source_owner":        "9xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDK",
+		"destination_address": "6xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDG",
+		"destination_owner":   "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDH",
+		"token":               "USDC",
+		"mint":                core.SolanaUSDCMint,
+		"amount":              "500.00",
+		"amount_atomic":       "500000000",
+		"decimals":            6,
+	}, http.StatusCreated)
+	transaction := transactionBody["stablecoin_transaction"].(map[string]any)
+	if transaction["status"] != core.TransactionStatusConfirmedOnchain {
+		t.Fatalf("transaction status = %q, want %q", transaction["status"], core.TransactionStatusConfirmedOnchain)
+	}
+
+	transactionListBody := getJSON(t, handler, "/v1/stablecoin-transactions", apiKey, http.StatusOK)
+	transactions := transactionListBody["stablecoin_transactions"].([]any)
+	if len(transactions) != 1 {
+		t.Fatalf("len(stablecoin_transactions) = %d, want 1", len(transactions))
+	}
+
 	auditBody := getJSON(t, handler, "/v1/audit-logs", apiKey, http.StatusOK)
 	auditLogs := auditBody["audit_logs"].([]any)
-	if len(auditLogs) < 3 {
-		t.Fatalf("len(audit_logs) = %d, want at least 3", len(auditLogs))
+	if len(auditLogs) < 4 {
+		t.Fatalf("len(audit_logs) = %d, want at least 4", len(auditLogs))
 	}
 }
 

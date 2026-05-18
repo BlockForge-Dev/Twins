@@ -1,0 +1,4 @@
+[workspace]
+members = ["workers/solana-watcher"]
+resolver = "3"
+

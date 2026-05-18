@@ -23,8 +23,10 @@ type MemoryStore struct {
 
 	wallets map[string]Wallet
 
-	paymentRequests map[string]PaymentRequest
-	idempotency     map[string]idempotencyRecord
+	paymentRequests        map[string]PaymentRequest
+	stablecoinTransactions map[string]StablecoinTransaction
+	transactionBySignature map[string]string
+	idempotency            map[string]idempotencyRecord
 
 	auditLogs map[string]AuditLog
 }
@@ -36,13 +38,15 @@ type idempotencyRecord struct {
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		businesses:      make(map[string]Business),
-		apiKeys:         make(map[string]APIKey),
-		apiKeyHash:      make(map[string]string),
-		wallets:         make(map[string]Wallet),
-		paymentRequests: make(map[string]PaymentRequest),
-		idempotency:     make(map[string]idempotencyRecord),
-		auditLogs:       make(map[string]AuditLog),
+		businesses:             make(map[string]Business),
+		apiKeys:                make(map[string]APIKey),
+		apiKeyHash:             make(map[string]string),
+		wallets:                make(map[string]Wallet),
+		paymentRequests:        make(map[string]PaymentRequest),
+		stablecoinTransactions: make(map[string]StablecoinTransaction),
+		transactionBySignature: make(map[string]string),
+		idempotency:            make(map[string]idempotencyRecord),
+		auditLogs:              make(map[string]AuditLog),
 	}
 }
 
@@ -309,6 +313,99 @@ func (s *MemoryStore) ListPaymentRequests(_ context.Context, businessID string) 
 	return requests, nil
 }
 
+func (s *MemoryStore) IngestStablecoinTransaction(_ context.Context, businessID, actorID string, input IngestStablecoinTransactionInput) (IngestStablecoinTransactionResult, error) {
+	normalized, err := normalizeStablecoinTransactionInput(input)
+	if err != nil {
+		return IngestStablecoinTransactionResult{}, err
+	}
+
+	now := time.Now().UTC()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	wallet, ok := s.findWalletForTransactionLocked(businessID, normalized.Chain, normalized.DestinationOwner, normalized.DestinationAddress)
+	if !ok {
+		return IngestStablecoinTransactionResult{}, NotFound("destination wallet is not registered for this business")
+	}
+
+	signatureScope := businessID + "|" + normalized.Chain + "|" + normalized.Signature
+	if existingID, ok := s.transactionBySignature[signatureScope]; ok {
+		existing := s.stablecoinTransactions[existingID]
+		if existing.AmountAtomic != normalized.AmountAtomic ||
+			existing.DestinationAddress != normalized.DestinationAddress ||
+			existing.DestinationOwner != normalized.DestinationOwner ||
+			existing.Mint != normalized.Mint {
+			return IngestStablecoinTransactionResult{}, Conflict("transaction signature was already ingested with different evidence")
+		}
+		return IngestStablecoinTransactionResult{StablecoinTransaction: existing, DuplicateReplayed: true}, nil
+	}
+
+	status := TransactionStatusPendingFinality
+	if normalized.ConfirmationStatus == "finalized" {
+		status = TransactionStatusConfirmedOnchain
+	}
+
+	transaction := StablecoinTransaction{
+		ID:                 newID("txn"),
+		BusinessID:         businessID,
+		WalletID:           wallet.ID,
+		Chain:              normalized.Chain,
+		Signature:          normalized.Signature,
+		Slot:               normalized.Slot,
+		BlockTime:          normalized.BlockTime,
+		ConfirmationStatus: normalized.ConfirmationStatus,
+		SourceAddress:      normalized.SourceAddress,
+		SourceOwner:        normalized.SourceOwner,
+		DestinationAddress: normalized.DestinationAddress,
+		DestinationOwner:   normalized.DestinationOwner,
+		Token:              normalized.Token,
+		Mint:               normalized.Mint,
+		Amount:             normalized.Amount,
+		AmountAtomic:       normalized.AmountAtomic,
+		Decimals:           normalized.Decimals,
+		Status:             status,
+		DetectedAt:         now,
+		CreatedAt:          now,
+	}
+
+	s.stablecoinTransactions[transaction.ID] = transaction
+	s.transactionBySignature[signatureScope] = transaction.ID
+	s.appendAuditLocked(AuditLog{
+		ID:           newID("aud"),
+		BusinessID:   businessID,
+		ActorType:    "api_key",
+		ActorID:      actorID,
+		Action:       "stablecoin_transaction.ingested",
+		ResourceType: "stablecoin_transaction",
+		ResourceID:   transaction.ID,
+		Metadata: map[string]string{
+			"signature": transaction.Signature,
+			"status":    transaction.Status,
+			"wallet_id": wallet.ID,
+		},
+		CreatedAt: now,
+	})
+
+	return IngestStablecoinTransactionResult{StablecoinTransaction: transaction}, nil
+}
+
+func (s *MemoryStore) ListStablecoinTransactions(_ context.Context, businessID string) ([]StablecoinTransaction, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	transactions := make([]StablecoinTransaction, 0)
+	for _, transaction := range s.stablecoinTransactions {
+		if transaction.BusinessID == businessID {
+			transactions = append(transactions, transaction)
+		}
+	}
+	sort.Slice(transactions, func(i, j int) bool {
+		return transactions[i].CreatedAt.After(transactions[j].CreatedAt)
+	})
+	return transactions, nil
+}
+
 func (s *MemoryStore) ListAuditLogs(_ context.Context, businessID string) ([]AuditLog, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -327,6 +424,18 @@ func (s *MemoryStore) ListAuditLogs(_ context.Context, businessID string) ([]Aud
 
 func (s *MemoryStore) appendAuditLocked(log AuditLog) {
 	s.auditLogs[log.ID] = log
+}
+
+func (s *MemoryStore) findWalletForTransactionLocked(businessID, chain, destinationOwner, destinationAddress string) (Wallet, bool) {
+	for _, wallet := range s.wallets {
+		if wallet.BusinessID != businessID || wallet.Chain != chain || wallet.ArchivedAt != nil {
+			continue
+		}
+		if wallet.Address == destinationOwner || wallet.Address == destinationAddress {
+			return wallet, true
+		}
+	}
+	return Wallet{}, false
 }
 
 func normalizePaymentRequestInput(input CreatePaymentRequestInput) (CreatePaymentRequestInput, error) {
@@ -365,6 +474,75 @@ func normalizePaymentRequestInput(input CreatePaymentRequestInput) (CreatePaymen
 	}
 	if input.Metadata == nil {
 		input.Metadata = map[string]string{}
+	}
+	return input, nil
+}
+
+func normalizeStablecoinTransactionInput(input IngestStablecoinTransactionInput) (IngestStablecoinTransactionInput, error) {
+	input.Chain = strings.ToLower(strings.TrimSpace(input.Chain))
+	input.Signature = strings.TrimSpace(input.Signature)
+	input.ConfirmationStatus = strings.ToLower(strings.TrimSpace(input.ConfirmationStatus))
+	input.SourceAddress = strings.TrimSpace(input.SourceAddress)
+	input.SourceOwner = strings.TrimSpace(input.SourceOwner)
+	input.DestinationAddress = strings.TrimSpace(input.DestinationAddress)
+	input.DestinationOwner = strings.TrimSpace(input.DestinationOwner)
+	input.Token = strings.ToUpper(strings.TrimSpace(input.Token))
+	input.Mint = strings.TrimSpace(input.Mint)
+	input.Amount = strings.TrimSpace(input.Amount)
+	input.AmountAtomic = strings.TrimSpace(input.AmountAtomic)
+
+	if input.Chain != ChainSolana {
+		return input, InvalidArgument("only solana transactions are supported in v1")
+	}
+	if input.Signature == "" {
+		return input, InvalidArgument("signature is required")
+	}
+	if input.Slot == 0 {
+		return input, InvalidArgument("slot is required")
+	}
+	if input.ConfirmationStatus == "" {
+		return input, InvalidArgument("confirmation_status is required")
+	}
+	if input.ConfirmationStatus != "processed" && input.ConfirmationStatus != "confirmed" && input.ConfirmationStatus != "finalized" {
+		return input, InvalidArgument("confirmation_status must be processed, confirmed, or finalized")
+	}
+	if err := validateAddress(input.SourceAddress); err != nil {
+		return input, InvalidArgument("source_address must look like a Solana address")
+	}
+	if err := validateAddress(input.DestinationAddress); err != nil {
+		return input, InvalidArgument("destination_address must look like a Solana address")
+	}
+	if input.DestinationOwner == "" {
+		input.DestinationOwner = input.DestinationAddress
+	}
+	if err := validateAddress(input.DestinationOwner); err != nil {
+		return input, InvalidArgument("destination_owner must look like a Solana address")
+	}
+	if input.SourceOwner != "" {
+		if err := validateAddress(input.SourceOwner); err != nil {
+			return input, InvalidArgument("source_owner must look like a Solana address")
+		}
+	}
+	if input.Token != TokenUSDC {
+		return input, InvalidArgument("only USDC transaction evidence is accepted in v1")
+	}
+	if input.Mint != SolanaUSDCMint {
+		return input, InvalidArgument("transaction mint is not Solana USDC")
+	}
+	if input.Decimals != 6 {
+		return input, InvalidArgument("USDC transaction decimals must be 6")
+	}
+	if input.AmountAtomic == "" {
+		return input, InvalidArgument("amount_atomic is required")
+	}
+	if _, ok := new(big.Int).SetString(input.AmountAtomic, 10); !ok {
+		return input, InvalidArgument("amount_atomic must be a base-10 integer")
+	}
+	if strings.HasPrefix(input.AmountAtomic, "-") || input.AmountAtomic == "0" {
+		return input, InvalidArgument("amount_atomic must be greater than zero")
+	}
+	if err := validateAmount(input.Amount); err != nil {
+		return input, err
 	}
 	return input, nil
 }

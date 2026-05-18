@@ -1,5 +1,5 @@
 .cache/
+target/
 *.log
 *.exe
 *.test
-

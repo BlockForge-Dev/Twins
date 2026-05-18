@@ -54,6 +54,11 @@ Done means:
 
 ## Milestone 3: Solana USDC Watcher And Verifier
 
+Implementation:
+
+- [Milestone 3 README](milestones/milestone-3/README.md)
+- [Stablecoin transaction schema](../migrations/0002_milestone3_stablecoin_transactions.sql)
+
 Build:
 
 - Solana wallet watcher

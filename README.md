@@ -66,6 +66,7 @@ Exception is raised if there is a mismatch
 - [Milestone 1 Validation Kit](docs/validation/README.md)
 - [Milestone 2 README](docs/milestones/milestone-2/README.md)
 - [Milestone 2 API Guide](docs/api/milestone-2.md)
+- [Milestone 3 README](docs/milestones/milestone-3/README.md)
 
 ## Run The API
 
@@ -93,3 +94,5 @@ For validation, begin with the [Milestone 1 Validation Kit](docs/validation/READ
 6. Update the scorecard every Friday.
 
 For the first build milestone, use the [Milestone 2 README](docs/milestones/milestone-2/README.md) and [Milestone 2 API guide](docs/api/milestone-2.md).
+
+For the first chain milestone, use the [Milestone 3 README](docs/milestones/milestone-3/README.md).

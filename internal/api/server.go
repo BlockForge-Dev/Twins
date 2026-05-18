@@ -38,6 +38,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/wallets", s.handleWallets)
 	s.mux.HandleFunc("/v1/payment-requests", s.handlePaymentRequests)
 	s.mux.HandleFunc("/v1/payment-requests/", s.handlePaymentRequestByID)
+	s.mux.HandleFunc("/v1/stablecoin-transactions", s.handleStablecoinTransactions)
 	s.mux.HandleFunc("/v1/audit-logs", s.handleAuditLogs)
 }
 
@@ -177,6 +178,42 @@ func (s *Server) handlePaymentRequestByID(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]core.PaymentRequest{"payment_request": paymentRequest})
+}
+
+func (s *Server) handleStablecoinTransactions(w http.ResponseWriter, r *http.Request) {
+	business, apiKey, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		transactions, err := s.store.ListStablecoinTransactions(r.Context(), business.ID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"stablecoin_transactions": transactions})
+	case http.MethodPost:
+		var input core.IngestStablecoinTransactionInput
+		if err := readJSON(r, &input); err != nil {
+			writeError(w, core.InvalidArgument(err.Error()))
+			return
+		}
+		result, err := s.store.IngestStablecoinTransaction(r.Context(), business.ID, apiKey.ID, input)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if result.DuplicateReplayed {
+			w.Header().Set("Duplicate-Replayed", "true")
+			writeJSON(w, http.StatusOK, result)
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	default:
+		writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
 }
 
 func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
