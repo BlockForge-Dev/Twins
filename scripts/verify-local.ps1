@@ -14,7 +14,7 @@ $GoCache = Join-Path $CacheDir "go-build"
 $CargoHome = Join-Path $CacheDir "cargo-home"
 $CargoTarget = Join-Path $CacheDir "cargo-target"
 $ApiBinary = Join-Path $CacheDir "twins-api-local.exe"
-$ApiLog = Join-Path $CacheDir "twins-api-local.log"
+$ApiLog = $null
 
 $WalletAddress = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDH"
 $FixturePath = "workers/solana-watcher/fixtures/inbound_usdc_transfer.json"
@@ -92,7 +92,7 @@ function Wait-ForHealth {
         }
     }
 
-    if (Test-Path $ApiLog) {
+    if ($ApiLog -and (Test-Path $ApiLog)) {
         Write-Host ""
         Write-Host "API log:" -ForegroundColor Yellow
         Get-Content $ApiLog
@@ -136,12 +136,10 @@ Invoke-Native -FilePath "go" -Arguments @("build", "-o", $ApiBinary, "./cmd/twin
 $Port = Find-FreePort -StartPort $Port
 $BaseUrl = "http://localhost:$Port"
 $PostUrl = "$BaseUrl/v1/stablecoin-transactions"
+$RunId = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+$ApiLog = Join-Path $CacheDir "twins-api-local-$Port-$RunId.log"
 
 Write-Step "Starting Twins API on $BaseUrl"
-if (Test-Path $ApiLog) {
-    Remove-Item -LiteralPath $ApiLog -Force
-}
-
 $serverCommand = "`$env:TWINS_HTTP_ADDR=':$Port'; Set-Location '$Root'; & '$ApiBinary' *> '$ApiLog'"
 $server = Start-Process -WindowStyle Hidden -FilePath "powershell" -ArgumentList @(
     "-NoProfile",
@@ -250,8 +248,10 @@ Write-Host "Dashboard: $BaseUrl/dashboard"
 Write-Host "Server PID: $ListenerPid"
 Write-Host "Business:  $($business.business.id)"
 Write-Host "Wallet:    $($wallet.wallet.id)"
+Write-Host "API key:   $apiKey"
 Write-Host "Tx status: $($tx.status)"
 Write-Host "Signature: $($tx.signature)"
+Write-Host "Log file:  $ApiLog"
 Write-Host ""
 Write-Host "To stop the API server:"
 Write-Host "Stop-Process -Id $ListenerPid"
