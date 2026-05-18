@@ -101,6 +101,19 @@ function Wait-ForHealth {
     throw "API did not become healthy at $BaseUrl"
 }
 
+function Get-ListeningPid {
+    param([int]$ListeningPort)
+
+    $lines = netstat -ano | Select-String "LISTENING" | Select-String ":$ListeningPort"
+    foreach ($line in $lines) {
+        if ($line.Line -match "^\s*TCP\s+\S+:$ListeningPort\s+\S+\s+LISTENING\s+(\d+)\s*$") {
+            return [int]$Matches[1]
+        }
+    }
+
+    return $null
+}
+
 Write-Step "Checking local tools"
 if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
     throw "Go is not installed or not on PATH"
@@ -139,6 +152,10 @@ $server = Start-Process -WindowStyle Hidden -FilePath "powershell" -ArgumentList
 ) -PassThru
 
 Wait-ForHealth -BaseUrl $BaseUrl
+$ListenerPid = Get-ListeningPid -ListeningPort $Port
+if ($null -eq $ListenerPid) {
+    $ListenerPid = $server.Id
+}
 
 Write-Step "Creating local business and wallet"
 $businessPayload = @{ name = "Local Verification" } | ConvertTo-Json
@@ -230,12 +247,11 @@ Write-Host ""
 Write-Host "Local verification passed." -ForegroundColor Green
 Write-Host "API:       $BaseUrl"
 Write-Host "Dashboard: $BaseUrl/dashboard"
-Write-Host "Server PID: $($server.Id)"
+Write-Host "Server PID: $ListenerPid"
 Write-Host "Business:  $($business.business.id)"
 Write-Host "Wallet:    $($wallet.wallet.id)"
 Write-Host "Tx status: $($tx.status)"
 Write-Host "Signature: $($tx.signature)"
 Write-Host ""
 Write-Host "To stop the API server:"
-Write-Host "Stop-Process -Id $($server.Id)"
-
+Write-Host "Stop-Process -Id $ListenerPid"
