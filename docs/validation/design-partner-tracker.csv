@@ -1,0 +1,3 @@
+company,segment,contact_name,role,email,stablecoin_usage_score,reconciliation_pain_score,matching_ambiguity_score,exception_pain_score,workaround_weakness_score,buyer_urgency_score,mvp_fit_score,trust_access_score,total_score,qualification_band,committed_to_test,next_step,next_step_date,notes
+Example Web3 SaaS,Web3 SaaS,,,,0,0,0,0,0,0,0,0,0,not_scored,false,Book discovery call,,Replace this row after first interview
+

@@ -1,0 +1,3 @@
+date,company,segment,interviewee_role,pain_type,description,current_workaround,business_impact,frequency,transaction_value,chain,token,evidence_type,evidence_reference,quote,priority,notes
+2026-05-14,Example Web3 SaaS,Web3 SaaS,Founder,orphan_transaction,Incoming payment could not be matched to a customer,Manual wallet explorer check,Delayed fulfillment,unknown,unknown,solana,USDC,interview_note,,Example placeholder,medium,Replace with real evidence
+

@@ -1,0 +1,508 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"html/template"
+	"io"
+	"net/http"
+	"strings"
+
+	"twins/internal/core"
+)
+
+type Server struct {
+	store *core.MemoryStore
+	mux   *http.ServeMux
+}
+
+func NewServer(store *core.MemoryStore) http.Handler {
+	server := &Server{
+		store: store,
+		mux:   http.NewServeMux(),
+	}
+	server.routes()
+	return server
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	s.mux.ServeHTTP(w, r)
+}
+
+func (s *Server) routes() {
+	s.mux.HandleFunc("/", s.handleRoot)
+	s.mux.HandleFunc("/healthz", s.handleHealth)
+	s.mux.HandleFunc("/dashboard", s.handleDashboard)
+	s.mux.HandleFunc("/v1/businesses", s.handleBusinesses)
+	s.mux.HandleFunc("/v1/wallets", s.handleWallets)
+	s.mux.HandleFunc("/v1/payment-requests", s.handlePaymentRequests)
+	s.mux.HandleFunc("/v1/payment-requests/", s.handlePaymentRequestByID)
+	s.mux.HandleFunc("/v1/audit-logs", s.handleAuditLogs)
+}
+
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		writeError(w, core.NotFound("route not found"))
+		return
+	}
+	http.Redirect(w, r, "/dashboard", http.StatusFound)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := dashboardTemplate.Execute(w, nil); err != nil {
+		http.Error(w, "dashboard render failed", http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleBusinesses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+
+	var input core.CreateBusinessInput
+	if err := readJSON(r, &input); err != nil {
+		writeError(w, core.InvalidArgument(err.Error()))
+		return
+	}
+
+	result, err := s.store.CreateBusiness(r.Context(), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (s *Server) handleWallets(w http.ResponseWriter, r *http.Request) {
+	business, apiKey, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		wallets, err := s.store.ListWallets(r.Context(), business.ID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"wallets": wallets})
+	case http.MethodPost:
+		var input core.RegisterWalletInput
+		if err := readJSON(r, &input); err != nil {
+			writeError(w, core.InvalidArgument(err.Error()))
+			return
+		}
+		wallet, err := s.store.RegisterWallet(r.Context(), business.ID, apiKey.ID, input)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]core.Wallet{"wallet": wallet})
+	default:
+		writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
+}
+
+func (s *Server) handlePaymentRequests(w http.ResponseWriter, r *http.Request) {
+	business, apiKey, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		requests, err := s.store.ListPaymentRequests(r.Context(), business.ID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"payment_requests": requests})
+	case http.MethodPost:
+		var input core.CreatePaymentRequestInput
+		if err := readJSON(r, &input); err != nil {
+			writeError(w, core.InvalidArgument(err.Error()))
+			return
+		}
+		result, err := s.store.CreatePaymentRequest(r.Context(), business.ID, apiKey.ID, r.Header.Get("Idempotency-Key"), input)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if result.IdempotentReplayed {
+			w.Header().Set("Idempotent-Replayed", "true")
+			writeJSON(w, http.StatusOK, result)
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	default:
+		writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
+}
+
+func (s *Server) handlePaymentRequestByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	business, _, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/v1/payment-requests/")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, core.NotFound("payment request not found"))
+		return
+	}
+
+	paymentRequest, err := s.store.GetPaymentRequest(r.Context(), business.ID, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]core.PaymentRequest{"payment_request": paymentRequest})
+}
+
+func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	business, _, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	logs, err := s.store.ListAuditLogs(r.Context(), business.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"audit_logs": logs})
+}
+
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (core.Business, core.APIKey, bool) {
+	raw := strings.TrimSpace(r.Header.Get("Authorization"))
+	if raw == "" {
+		writeError(w, core.Unauthorized("Authorization header is required"))
+		return core.Business{}, core.APIKey{}, false
+	}
+	if !strings.HasPrefix(strings.ToLower(raw), "bearer ") {
+		writeError(w, core.Unauthorized("Authorization header must use Bearer authentication"))
+		return core.Business{}, core.APIKey{}, false
+	}
+
+	token := strings.TrimSpace(raw[len("Bearer "):])
+	business, apiKey, err := s.store.AuthenticateAPIKey(r.Context(), token)
+	if err != nil {
+		writeError(w, err)
+		return core.Business{}, core.APIKey{}, false
+	}
+	return business, apiKey, true
+}
+
+func readJSON(r *http.Request, target any) error {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("request body must contain a single JSON object")
+	}
+	return nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeError(w http.ResponseWriter, err error) {
+	var appErr *core.AppError
+	if !errors.As(err, &appErr) {
+		appErr = &core.AppError{Code: "internal", Message: "internal server error"}
+	}
+
+	status := http.StatusInternalServerError
+	switch appErr.Code {
+	case core.CodeInvalidArgument:
+		status = http.StatusBadRequest
+	case core.CodeUnauthorized:
+		status = http.StatusUnauthorized
+	case core.CodeNotFound:
+		status = http.StatusNotFound
+	case core.CodeConflict:
+		status = http.StatusConflict
+	}
+
+	writeJSON(w, status, map[string]any{"error": appErr})
+}
+
+func writeMethodNotAllowed(w http.ResponseWriter, methods ...string) {
+	w.Header().Set("Allow", strings.Join(methods, ", "))
+	writeJSON(w, http.StatusMethodNotAllowed, map[string]any{
+		"error": map[string]string{
+			"code":    "method_not_allowed",
+			"message": "method not allowed",
+		},
+	})
+}
+
+var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Twins Dashboard</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18201c;
+      --muted: #66736b;
+      --line: #d8ded9;
+      --panel: #ffffff;
+      --bg: #f4f7f2;
+      --accent: #0f7a5f;
+      --accent-2: #294f8a;
+      --warn: #b45309;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    header {
+      border-bottom: 1px solid var(--line);
+      background: #ffffff;
+      padding: 18px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 24px auto;
+    }
+    h1 {
+      font-size: 22px;
+      margin: 0;
+      letter-spacing: 0;
+    }
+    .muted { color: var(--muted); }
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) auto auto;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+    input {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 12px;
+      font: inherit;
+      background: #ffffff;
+      color: var(--ink);
+    }
+    button {
+      min-height: 40px;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      background: var(--accent);
+      color: #ffffff;
+      padding: 0 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #ffffff;
+      color: var(--accent-2);
+      border-color: var(--line);
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .section-head {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    h2 {
+      font-size: 15px;
+      margin: 0;
+      letter-spacing: 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 14px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      background: #fbfcfa;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .status {
+      display: inline-block;
+      border: 1px solid #b6d6c9;
+      background: #e9f6f0;
+      color: #0f5d49;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .empty, .error {
+      padding: 28px 16px;
+      color: var(--muted);
+    }
+    .error { color: var(--warn); }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }
+    @media (max-width: 720px) {
+      header { align-items: flex-start; flex-direction: column; }
+      .toolbar { grid-template-columns: 1fr; }
+      table { min-width: 760px; }
+      .table-wrap { overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Twins</h1>
+      <div class="muted">Payment requests</div>
+    </div>
+    <div class="muted" id="wallet-count"></div>
+  </header>
+  <main>
+    <div class="toolbar">
+      <input id="api-key" type="password" autocomplete="off" placeholder="API key">
+      <button id="refresh">Refresh</button>
+      <button class="secondary" id="clear">Clear</button>
+    </div>
+    <section>
+      <div class="section-head">
+        <h2>Payment Request List</h2>
+        <span class="muted" id="updated-at"></span>
+      </div>
+      <div class="table-wrap" id="content">
+        <div class="empty">Enter an API key to load payment requests.</div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const keyInput = document.querySelector("#api-key");
+    const refreshButton = document.querySelector("#refresh");
+    const clearButton = document.querySelector("#clear");
+    const content = document.querySelector("#content");
+    const updatedAt = document.querySelector("#updated-at");
+    const walletCount = document.querySelector("#wallet-count");
+
+    keyInput.value = localStorage.getItem("twins_api_key") || "";
+
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, function (char) {
+        return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char];
+      });
+    }
+
+    async function api(path) {
+      const key = keyInput.value.trim();
+      if (!key) throw new Error("API key is required");
+      localStorage.setItem("twins_api_key", key);
+      const response = await fetch(path, {
+        headers: { "Authorization": "Bearer " + key }
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error?.message || "Request failed");
+      }
+      return data;
+    }
+
+    function renderRows(rows) {
+      if (!rows.length) {
+        content.innerHTML = '<div class="empty">No payment requests yet.</div>';
+        return;
+      }
+      content.innerHTML = '<table><thead><tr><th>ID</th><th>Status</th><th>Amount</th><th>Customer</th><th>Invoice</th><th>Destination</th><th>Expires</th></tr></thead><tbody>' +
+        rows.map(row => '<tr>' +
+          '<td><code>' + esc(row.id) + '</code></td>' +
+          '<td><span class="status">' + esc(row.status) + '</span></td>' +
+          '<td>' + esc(row.amount) + ' ' + esc(row.token) + '</td>' +
+          '<td>' + esc(row.customer_id) + '</td>' +
+          '<td>' + esc(row.invoice_id) + '</td>' +
+          '<td><code>' + esc(row.destination_address) + '</code></td>' +
+          '<td>' + esc(new Date(row.expires_at).toLocaleString()) + '</td>' +
+        '</tr>').join("") +
+        '</tbody></table>';
+    }
+
+    async function refresh() {
+      content.innerHTML = '<div class="empty">Loading...</div>';
+      walletCount.textContent = "";
+      try {
+        const [requestData, walletData] = await Promise.all([
+          api("/v1/payment-requests"),
+          api("/v1/wallets")
+        ]);
+        renderRows(requestData.payment_requests || []);
+        const wallets = walletData.wallets || [];
+        walletCount.textContent = wallets.length + " wallet" + (wallets.length === 1 ? "" : "s");
+        updatedAt.textContent = "Updated " + new Date().toLocaleTimeString();
+      } catch (err) {
+        content.innerHTML = '<div class="error">' + esc(err.message) + '</div>';
+      }
+    }
+
+    refreshButton.addEventListener("click", refresh);
+    clearButton.addEventListener("click", function () {
+      localStorage.removeItem("twins_api_key");
+      keyInput.value = "";
+      walletCount.textContent = "";
+      updatedAt.textContent = "";
+      content.innerHTML = '<div class="empty">Enter an API key to load payment requests.</div>';
+    });
+    if (keyInput.value) refresh();
+  </script>
+</body>
+</html>`))
