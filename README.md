@@ -89,6 +89,7 @@ powershell -ExecutionPolicy Bypass -File scripts/verify-local.ps1
 ```
 
 This runs Go and Rust tests, starts the API on a free local port, posts verified Solana USDC fixture evidence from the Rust watcher into the Go API, checks duplicate handling, and verifies the wrong-token rejection path.
+It also creates a local USDC payment request so the dashboard shows both business intent and on-chain evidence.
 
 ## Start Here
 

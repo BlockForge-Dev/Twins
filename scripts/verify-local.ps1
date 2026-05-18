@@ -167,6 +167,35 @@ $walletPayload = @{
 } | ConvertTo-Json
 $wallet = Invoke-RestMethod -Method Post -Uri "$BaseUrl/v1/wallets" -Headers @{ Authorization = "Bearer $apiKey" } -ContentType "application/json" -Body $walletPayload
 
+Write-Step "Creating local USDC payment request"
+$expiresAt = [DateTime]::UtcNow.AddDays(1).ToString("yyyy-MM-ddTHH:mm:ssZ")
+$paymentRequestPayload = @{
+    wallet_id   = $wallet.wallet.id
+    customer_id = "cust_local_verify"
+    invoice_id  = "INV-LOCAL-VERIFY"
+    amount      = "500.00"
+    token       = "USDC"
+    chain       = "solana"
+    expires_at  = $expiresAt
+    metadata    = @{
+        source = "verify-local"
+        run_id = $RunId
+    }
+} | ConvertTo-Json -Depth 4
+$paymentRequest = Invoke-RestMethod -Method Post -Uri "$BaseUrl/v1/payment-requests" -Headers @{
+    Authorization       = "Bearer $apiKey"
+    "Idempotency-Key"   = "verify-local-$RunId"
+} -ContentType "application/json" -Body $paymentRequestPayload
+
+$paymentRequests = Invoke-RestMethod -Method Get -Uri "$BaseUrl/v1/payment-requests" -Headers @{ Authorization = "Bearer $apiKey" }
+$storedPaymentRequests = @($paymentRequests.payment_requests)
+if ($storedPaymentRequests.Count -ne 1) {
+    throw "Expected 1 stored payment request, got $($storedPaymentRequests.Count)"
+}
+if ($paymentRequest.payment_request.status -ne "awaiting_payment") {
+    throw "Expected payment request status awaiting_payment, got $($paymentRequest.payment_request.status)"
+}
+
 Write-Step "Verifying inbound USDC fixture and posting evidence"
 Invoke-Native -FilePath "cargo" -Arguments @(
     "run",
@@ -249,6 +278,7 @@ Write-Host "Server PID: $ListenerPid"
 Write-Host "Business:  $($business.business.id)"
 Write-Host "Wallet:    $($wallet.wallet.id)"
 Write-Host "API key:   $apiKey"
+Write-Host "Request:   $($paymentRequest.payment_request.id) [$($paymentRequest.payment_request.status)]"
 Write-Host "Tx status: $($tx.status)"
 Write-Host "Signature: $($tx.signature)"
 Write-Host "Log file:  $ApiLog"

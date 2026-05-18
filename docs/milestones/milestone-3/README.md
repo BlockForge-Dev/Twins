@@ -52,7 +52,7 @@ The script:
 - Runs Go tests.
 - Runs Rust tests.
 - Starts a fresh local API instance.
-- Creates a local business and registered Solana wallet.
+- Creates a local business, registered Solana wallet, and USDC payment request.
 - Runs the Rust watcher against the inbound USDC fixture.
 - Posts verified evidence into the Go API.
 - Confirms the transaction is stored as `confirmed_onchain`.

@@ -385,6 +385,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype
       border: 1px solid var(--line);
       border-radius: 8px;
       overflow: hidden;
+      margin-bottom: 18px;
     }
     .section-head {
       padding: 14px 16px;
@@ -446,7 +447,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype
   <header>
     <div>
       <h1>Twins</h1>
-      <div class="muted">Payment requests</div>
+      <div class="muted">Payment requests and chain evidence</div>
     </div>
     <div class="muted" id="wallet-count"></div>
   </header>
@@ -465,13 +466,24 @@ var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype
         <div class="empty">Enter an API key to load payment requests.</div>
       </div>
     </section>
+    <section>
+      <div class="section-head">
+        <h2>Stablecoin Transaction Evidence</h2>
+        <span class="muted" id="transaction-count"></span>
+      </div>
+      <div class="table-wrap" id="transaction-content">
+        <div class="empty">Enter an API key to load transaction evidence.</div>
+      </div>
+    </section>
   </main>
   <script>
     const keyInput = document.querySelector("#api-key");
     const refreshButton = document.querySelector("#refresh");
     const clearButton = document.querySelector("#clear");
     const content = document.querySelector("#content");
+    const transactionContent = document.querySelector("#transaction-content");
     const updatedAt = document.querySelector("#updated-at");
+    const transactionCount = document.querySelector("#transaction-count");
     const walletCount = document.querySelector("#wallet-count");
 
     keyInput.value = localStorage.getItem("twins_api_key") || "";
@@ -514,20 +526,43 @@ var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype
         '</tbody></table>';
     }
 
+    function renderTransactions(rows) {
+      transactionCount.textContent = rows.length + " transaction" + (rows.length === 1 ? "" : "s");
+      if (!rows.length) {
+        transactionContent.innerHTML = '<div class="empty">No stablecoin transaction evidence yet.</div>';
+        return;
+      }
+      transactionContent.innerHTML = '<table><thead><tr><th>Signature</th><th>Status</th><th>Amount</th><th>Finality</th><th>Destination Owner</th><th>Slot</th></tr></thead><tbody>' +
+        rows.map(row => '<tr>' +
+          '<td><code>' + esc(row.signature) + '</code></td>' +
+          '<td><span class="status">' + esc(row.status) + '</span></td>' +
+          '<td>' + esc(row.amount) + ' ' + esc(row.token) + '</td>' +
+          '<td>' + esc(row.confirmation_status) + '</td>' +
+          '<td><code>' + esc(row.destination_owner) + '</code></td>' +
+          '<td>' + esc(row.slot) + '</td>' +
+        '</tr>').join("") +
+        '</tbody></table>';
+    }
+
     async function refresh() {
       content.innerHTML = '<div class="empty">Loading...</div>';
+      transactionContent.innerHTML = '<div class="empty">Loading...</div>';
       walletCount.textContent = "";
+      transactionCount.textContent = "";
       try {
-        const [requestData, walletData] = await Promise.all([
+        const [requestData, walletData, transactionData] = await Promise.all([
           api("/v1/payment-requests"),
-          api("/v1/wallets")
+          api("/v1/wallets"),
+          api("/v1/stablecoin-transactions")
         ]);
         renderRows(requestData.payment_requests || []);
+        renderTransactions(transactionData.stablecoin_transactions || []);
         const wallets = walletData.wallets || [];
         walletCount.textContent = wallets.length + " wallet" + (wallets.length === 1 ? "" : "s");
         updatedAt.textContent = "Updated " + new Date().toLocaleTimeString();
       } catch (err) {
         content.innerHTML = '<div class="error">' + esc(err.message) + '</div>';
+        transactionContent.innerHTML = '<div class="error">' + esc(err.message) + '</div>';
       }
     }
 
@@ -537,7 +572,9 @@ var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype
       keyInput.value = "";
       walletCount.textContent = "";
       updatedAt.textContent = "";
+      transactionCount.textContent = "";
       content.innerHTML = '<div class="empty">Enter an API key to load payment requests.</div>';
+      transactionContent.innerHTML = '<div class="empty">Enter an API key to load transaction evidence.</div>';
     });
     if (keyInput.value) refresh();
   </script>
