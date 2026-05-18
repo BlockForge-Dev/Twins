@@ -39,6 +39,26 @@ Worker path:
 workers/solana-watcher
 ```
 
+## One-Command Local Verification
+
+From the repo root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/verify-local.ps1
+```
+
+The script:
+
+- Runs Go tests.
+- Runs Rust tests.
+- Starts a fresh local API instance.
+- Creates a local business and registered Solana wallet.
+- Runs the Rust watcher against the inbound USDC fixture.
+- Posts verified evidence into the Go API.
+- Confirms the transaction is stored as `confirmed_onchain`.
+- Replays the same fixture to prove duplicate ingestion is idempotent.
+- Verifies the wrong-token fixture is rejected as `wrong_token`.
+
 Run fixture verification:
 
 ```powershell
@@ -126,4 +146,3 @@ Milestone 4 connects this evidence to business intent:
 - Detect expired payment
 - Detect orphan transaction
 - Add manual review queue
-

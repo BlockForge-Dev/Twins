@@ -80,6 +80,16 @@ Then open:
 http://localhost:8080/dashboard
 ```
 
+## Verify Locally
+
+Run the full local smoke test:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/verify-local.ps1
+```
+
+This runs Go and Rust tests, starts the API on a free local port, posts verified Solana USDC fixture evidence from the Rust watcher into the Go API, checks duplicate handling, and verifies the wrong-token rejection path.
+
 ## Start Here
 
 The first milestone is customer validation. The second milestone is the core business-intent API.
