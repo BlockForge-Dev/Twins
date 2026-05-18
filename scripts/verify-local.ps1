@@ -13,7 +13,8 @@ $CacheDir = Join-Path $Root ".cache"
 $GoCache = Join-Path $CacheDir "go-build"
 $CargoHome = Join-Path $CacheDir "cargo-home"
 $CargoTarget = Join-Path $CacheDir "cargo-target"
-$ApiBinary = Join-Path $CacheDir "twins-api-local.exe"
+$RunId = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+$ApiBinary = Join-Path $CacheDir "twins-api-local-$RunId.exe"
 $ApiLog = $null
 
 $WalletAddress = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDH"
@@ -136,7 +137,6 @@ Invoke-Native -FilePath "go" -Arguments @("build", "-o", $ApiBinary, "./cmd/twin
 $Port = Find-FreePort -StartPort $Port
 $BaseUrl = "http://localhost:$Port"
 $PostUrl = "$BaseUrl/v1/stablecoin-transactions"
-$RunId = Get-Date -Format "yyyyMMdd-HHmmss-fff"
 $ApiLog = Join-Path $CacheDir "twins-api-local-$Port-$RunId.log"
 
 Write-Step "Starting Twins API on $BaseUrl"
@@ -252,6 +252,7 @@ Write-Host "API key:   $apiKey"
 Write-Host "Tx status: $($tx.status)"
 Write-Host "Signature: $($tx.signature)"
 Write-Host "Log file:  $ApiLog"
+Write-Host "Binary:    $ApiBinary"
 Write-Host ""
 Write-Host "To stop the API server:"
 Write-Host "Stop-Process -Id $ListenerPid"
