@@ -67,6 +67,7 @@ Exception is raised if there is a mismatch
 - [Milestone 2 README](docs/milestones/milestone-2/README.md)
 - [Milestone 2 API Guide](docs/api/milestone-2.md)
 - [Milestone 3 README](docs/milestones/milestone-3/README.md)
+- [Milestone 4 README](docs/milestones/milestone-4/README.md)
 
 ## Run The API
 
@@ -88,8 +89,8 @@ Run the full local smoke test:
 powershell -ExecutionPolicy Bypass -File scripts/verify-local.ps1
 ```
 
-This runs Go and Rust tests, starts the API on a free local port, posts verified Solana USDC fixture evidence from the Rust watcher into the Go API, checks duplicate handling, and verifies the wrong-token rejection path.
-It also creates a local USDC payment request so the dashboard shows both business intent and on-chain evidence.
+This runs Go and Rust tests, starts the API on a free local port, creates a USDC payment request, posts verified Solana USDC fixture evidence from the Rust watcher into the Go API, confirms the payment through the matching engine, checks duplicate handling, and verifies the wrong-token rejection path.
+The dashboard shows business intent, on-chain evidence, transaction matches, and exceptions.
 
 ## Start Here
 
@@ -107,3 +108,5 @@ For validation, begin with the [Milestone 1 Validation Kit](docs/validation/READ
 For the first build milestone, use the [Milestone 2 README](docs/milestones/milestone-2/README.md) and [Milestone 2 API guide](docs/api/milestone-2.md).
 
 For the first chain milestone, use the [Milestone 3 README](docs/milestones/milestone-3/README.md).
+
+For matching and exceptions, use the [Milestone 4 README](docs/milestones/milestone-4/README.md).

@@ -3,10 +3,34 @@ package core
 import "time"
 
 const (
-	PaymentStatusAwaitingPayment = "awaiting_payment"
+	PaymentStatusAwaitingPayment  = "awaiting_payment"
+	PaymentStatusConfirmed        = "confirmed"
+	PaymentStatusUnderpaid        = "underpaid"
+	PaymentStatusOverpaid         = "overpaid"
+	PaymentStatusExpired          = "expired"
+	PaymentStatusException        = "exception"
+	PaymentStatusManuallyResolved = "manually_resolved"
 
 	TransactionStatusPendingFinality  = "pending_finality"
 	TransactionStatusConfirmedOnchain = "confirmed_onchain"
+	TransactionStatusMatchedToRequest = "matched_to_request"
+	TransactionStatusOrphan           = "orphan"
+
+	MatchStatusConfirmed = "confirmed"
+	MatchStatusUnderpaid = "underpaid"
+	MatchStatusOverpaid  = "overpaid"
+	MatchStatusExpired   = "expired"
+
+	ExceptionStatusOpen     = "open"
+	ExceptionStatusResolved = "resolved"
+
+	ExceptionTypeUnderpaid      = "underpaid"
+	ExceptionTypeOverpaid       = "overpaid"
+	ExceptionTypeExpired        = "expired"
+	ExceptionTypeOrphan         = "orphan"
+	ExceptionTypeAmbiguousMatch = "ambiguous_match"
+	ExceptionTypeWrongToken     = "wrong_token"
+	ExceptionTypeWrongChain     = "wrong_chain"
 
 	ChainSolana    = "solana"
 	TokenUSDC      = "USDC"
@@ -81,6 +105,33 @@ type StablecoinTransaction struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
+type TransactionMatch struct {
+	ID                      string    `json:"id"`
+	BusinessID              string    `json:"business_id"`
+	PaymentRequestID        string    `json:"payment_request_id"`
+	StablecoinTransactionID string    `json:"stablecoin_transaction_id"`
+	Status                  string    `json:"status"`
+	ExpectedAmount          string    `json:"expected_amount"`
+	ReceivedAmount          string    `json:"received_amount"`
+	Reason                  string    `json:"reason,omitempty"`
+	CreatedAt               time.Time `json:"created_at"`
+}
+
+type PaymentException struct {
+	ID                      string     `json:"id"`
+	BusinessID              string     `json:"business_id"`
+	PaymentRequestID        string     `json:"payment_request_id,omitempty"`
+	StablecoinTransactionID string     `json:"stablecoin_transaction_id,omitempty"`
+	Type                    string     `json:"type"`
+	Status                  string     `json:"status"`
+	Severity                string     `json:"severity"`
+	Reason                  string     `json:"reason"`
+	ResolutionReason        string     `json:"resolution_reason,omitempty"`
+	ResolvedBy              string     `json:"resolved_by,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+	ResolvedAt              *time.Time `json:"resolved_at,omitempty"`
+}
+
 type AuditLog struct {
 	ID           string            `json:"id"`
 	BusinessID   string            `json:"business_id"`
@@ -144,5 +195,11 @@ type IngestStablecoinTransactionInput struct {
 
 type IngestStablecoinTransactionResult struct {
 	StablecoinTransaction StablecoinTransaction `json:"stablecoin_transaction"`
+	TransactionMatch      *TransactionMatch     `json:"transaction_match,omitempty"`
+	Exception             *PaymentException     `json:"exception,omitempty"`
 	DuplicateReplayed     bool                  `json:"duplicate_replayed"`
+}
+
+type ResolveExceptionInput struct {
+	Reason string `json:"reason"`
 }

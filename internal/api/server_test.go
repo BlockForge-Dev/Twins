@@ -60,7 +60,6 @@ func TestMilestone2HTTPFlow(t *testing.T) {
 		"chain":               "solana",
 		"signature":           "5LqMEXAMPLE111111111111111111111111111111111111111111111111111",
 		"slot":                123456,
-		"block_time":          1779293456,
 		"confirmation_status": "finalized",
 		"source_address":      "8xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDJ",
 		"source_owner":        "9xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgEDK",
@@ -73,8 +72,8 @@ func TestMilestone2HTTPFlow(t *testing.T) {
 		"decimals":            6,
 	}, http.StatusCreated)
 	transaction := transactionBody["stablecoin_transaction"].(map[string]any)
-	if transaction["status"] != core.TransactionStatusConfirmedOnchain {
-		t.Fatalf("transaction status = %q, want %q", transaction["status"], core.TransactionStatusConfirmedOnchain)
+	if transaction["status"] != core.TransactionStatusMatchedToRequest {
+		t.Fatalf("transaction status = %q, want %q", transaction["status"], core.TransactionStatusMatchedToRequest)
 	}
 
 	transactionListBody := getJSON(t, handler, "/v1/stablecoin-transactions", apiKey, http.StatusOK)
@@ -83,10 +82,29 @@ func TestMilestone2HTTPFlow(t *testing.T) {
 		t.Fatalf("len(stablecoin_transactions) = %d, want 1", len(transactions))
 	}
 
+	updatedListBody := getJSON(t, handler, "/v1/payment-requests", apiKey, http.StatusOK)
+	updatedRequests := updatedListBody["payment_requests"].([]any)
+	updatedRequest := updatedRequests[0].(map[string]any)
+	if updatedRequest["status"] != core.PaymentStatusConfirmed {
+		t.Fatalf("payment request status = %q, want %q", updatedRequest["status"], core.PaymentStatusConfirmed)
+	}
+
+	matchListBody := getJSON(t, handler, "/v1/transaction-matches", apiKey, http.StatusOK)
+	matches := matchListBody["transaction_matches"].([]any)
+	if len(matches) != 1 {
+		t.Fatalf("len(transaction_matches) = %d, want 1", len(matches))
+	}
+
+	exceptionListBody := getJSON(t, handler, "/v1/exceptions", apiKey, http.StatusOK)
+	exceptions := exceptionListBody["exceptions"].([]any)
+	if len(exceptions) != 0 {
+		t.Fatalf("len(exceptions) = %d, want 0", len(exceptions))
+	}
+
 	auditBody := getJSON(t, handler, "/v1/audit-logs", apiKey, http.StatusOK)
 	auditLogs := auditBody["audit_logs"].([]any)
-	if len(auditLogs) < 4 {
-		t.Fatalf("len(audit_logs) = %d, want at least 4", len(auditLogs))
+	if len(auditLogs) < 5 {
+		t.Fatalf("len(audit_logs) = %d, want at least 5", len(auditLogs))
 	}
 }
 

@@ -78,6 +78,11 @@ Done means:
 
 ## Milestone 4: Matching Engine And Exception Engine
 
+Implementation:
+
+- [Milestone 4 README](milestones/milestone-4/README.md)
+- [Matches and exceptions schema](../migrations/0003_milestone4_matches_exceptions.sql)
+
 Build:
 
 - Transaction-to-payment-request matching

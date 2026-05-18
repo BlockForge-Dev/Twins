@@ -39,6 +39,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/payment-requests", s.handlePaymentRequests)
 	s.mux.HandleFunc("/v1/payment-requests/", s.handlePaymentRequestByID)
 	s.mux.HandleFunc("/v1/stablecoin-transactions", s.handleStablecoinTransactions)
+	s.mux.HandleFunc("/v1/transaction-matches", s.handleTransactionMatches)
+	s.mux.HandleFunc("/v1/exceptions", s.handleExceptions)
+	s.mux.HandleFunc("/v1/exceptions/", s.handleExceptionByID)
 	s.mux.HandleFunc("/v1/audit-logs", s.handleAuditLogs)
 }
 
@@ -214,6 +217,73 @@ func (s *Server) handleStablecoinTransactions(w http.ResponseWriter, r *http.Req
 	default:
 		writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
+}
+
+func (s *Server) handleTransactionMatches(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	business, _, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	matches, err := s.store.ListTransactionMatches(r.Context(), business.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"transaction_matches": matches})
+}
+
+func (s *Server) handleExceptions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	business, _, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	exceptions, err := s.store.ListExceptions(r.Context(), business.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"exceptions": exceptions})
+}
+
+func (s *Server) handleExceptionByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	business, apiKey, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	remaining := strings.TrimPrefix(r.URL.Path, "/v1/exceptions/")
+	parts := strings.Split(remaining, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] != "resolve" {
+		writeError(w, core.NotFound("exception route not found"))
+		return
+	}
+
+	var input core.ResolveExceptionInput
+	if err := readJSON(r, &input); err != nil {
+		writeError(w, core.InvalidArgument(err.Error()))
+		return
+	}
+
+	exception, err := s.store.ResolveException(r.Context(), business.ID, apiKey.ID, parts[0], input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]core.PaymentException{"exception": exception})
 }
 
 func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
@@ -475,6 +545,24 @@ var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype
         <div class="empty">Enter an API key to load transaction evidence.</div>
       </div>
     </section>
+    <section>
+      <div class="section-head">
+        <h2>Transaction Matches</h2>
+        <span class="muted" id="match-count"></span>
+      </div>
+      <div class="table-wrap" id="match-content">
+        <div class="empty">Enter an API key to load matches.</div>
+      </div>
+    </section>
+    <section>
+      <div class="section-head">
+        <h2>Exceptions</h2>
+        <span class="muted" id="exception-count"></span>
+      </div>
+      <div class="table-wrap" id="exception-content">
+        <div class="empty">Enter an API key to load exceptions.</div>
+      </div>
+    </section>
   </main>
   <script>
     const keyInput = document.querySelector("#api-key");
@@ -482,8 +570,12 @@ var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype
     const clearButton = document.querySelector("#clear");
     const content = document.querySelector("#content");
     const transactionContent = document.querySelector("#transaction-content");
+    const matchContent = document.querySelector("#match-content");
+    const exceptionContent = document.querySelector("#exception-content");
     const updatedAt = document.querySelector("#updated-at");
     const transactionCount = document.querySelector("#transaction-count");
+    const matchCount = document.querySelector("#match-count");
+    const exceptionCount = document.querySelector("#exception-count");
     const walletCount = document.querySelector("#wallet-count");
 
     keyInput.value = localStorage.getItem("twins_api_key") || "";
@@ -544,25 +636,73 @@ var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype
         '</tbody></table>';
     }
 
+    function renderMatches(rows) {
+      matchCount.textContent = rows.length + " match" + (rows.length === 1 ? "" : "es");
+      if (!rows.length) {
+        matchContent.innerHTML = '<div class="empty">No transaction matches yet.</div>';
+        return;
+      }
+      matchContent.innerHTML = '<table><thead><tr><th>ID</th><th>Status</th><th>Request</th><th>Transaction</th><th>Expected</th><th>Received</th><th>Reason</th></tr></thead><tbody>' +
+        rows.map(row => '<tr>' +
+          '<td><code>' + esc(row.id) + '</code></td>' +
+          '<td><span class="status">' + esc(row.status) + '</span></td>' +
+          '<td><code>' + esc(row.payment_request_id) + '</code></td>' +
+          '<td><code>' + esc(row.stablecoin_transaction_id) + '</code></td>' +
+          '<td>' + esc(row.expected_amount) + '</td>' +
+          '<td>' + esc(row.received_amount) + '</td>' +
+          '<td>' + esc(row.reason) + '</td>' +
+        '</tr>').join("") +
+        '</tbody></table>';
+    }
+
+    function renderExceptions(rows) {
+      exceptionCount.textContent = rows.length + " exception" + (rows.length === 1 ? "" : "s");
+      if (!rows.length) {
+        exceptionContent.innerHTML = '<div class="empty">No open or resolved exceptions yet.</div>';
+        return;
+      }
+      exceptionContent.innerHTML = '<table><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Severity</th><th>Request</th><th>Transaction</th><th>Reason</th></tr></thead><tbody>' +
+        rows.map(row => '<tr>' +
+          '<td><code>' + esc(row.id) + '</code></td>' +
+          '<td>' + esc(row.type) + '</td>' +
+          '<td><span class="status">' + esc(row.status) + '</span></td>' +
+          '<td>' + esc(row.severity) + '</td>' +
+          '<td><code>' + esc(row.payment_request_id || "") + '</code></td>' +
+          '<td><code>' + esc(row.stablecoin_transaction_id || "") + '</code></td>' +
+          '<td>' + esc(row.reason) + '</td>' +
+        '</tr>').join("") +
+        '</tbody></table>';
+    }
+
     async function refresh() {
       content.innerHTML = '<div class="empty">Loading...</div>';
       transactionContent.innerHTML = '<div class="empty">Loading...</div>';
+      matchContent.innerHTML = '<div class="empty">Loading...</div>';
+      exceptionContent.innerHTML = '<div class="empty">Loading...</div>';
       walletCount.textContent = "";
       transactionCount.textContent = "";
+      matchCount.textContent = "";
+      exceptionCount.textContent = "";
       try {
-        const [requestData, walletData, transactionData] = await Promise.all([
+        const [requestData, walletData, transactionData, matchData, exceptionData] = await Promise.all([
           api("/v1/payment-requests"),
           api("/v1/wallets"),
-          api("/v1/stablecoin-transactions")
+          api("/v1/stablecoin-transactions"),
+          api("/v1/transaction-matches"),
+          api("/v1/exceptions")
         ]);
         renderRows(requestData.payment_requests || []);
         renderTransactions(transactionData.stablecoin_transactions || []);
+        renderMatches(matchData.transaction_matches || []);
+        renderExceptions(exceptionData.exceptions || []);
         const wallets = walletData.wallets || [];
         walletCount.textContent = wallets.length + " wallet" + (wallets.length === 1 ? "" : "s");
         updatedAt.textContent = "Updated " + new Date().toLocaleTimeString();
       } catch (err) {
         content.innerHTML = '<div class="error">' + esc(err.message) + '</div>';
         transactionContent.innerHTML = '<div class="error">' + esc(err.message) + '</div>';
+        matchContent.innerHTML = '<div class="error">' + esc(err.message) + '</div>';
+        exceptionContent.innerHTML = '<div class="error">' + esc(err.message) + '</div>';
       }
     }
 
@@ -573,8 +713,12 @@ var dashboardTemplate = template.Must(template.New("dashboard").Parse(`<!doctype
       walletCount.textContent = "";
       updatedAt.textContent = "";
       transactionCount.textContent = "";
+      matchCount.textContent = "";
+      exceptionCount.textContent = "";
       content.innerHTML = '<div class="empty">Enter an API key to load payment requests.</div>';
       transactionContent.innerHTML = '<div class="empty">Enter an API key to load transaction evidence.</div>';
+      matchContent.innerHTML = '<div class="empty">Enter an API key to load matches.</div>';
+      exceptionContent.innerHTML = '<div class="empty">Enter an API key to load exceptions.</div>';
     });
     if (keyInput.value) refresh();
   </script>

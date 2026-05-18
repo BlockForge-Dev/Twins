@@ -26,6 +26,8 @@ type MemoryStore struct {
 	paymentRequests        map[string]PaymentRequest
 	stablecoinTransactions map[string]StablecoinTransaction
 	transactionBySignature map[string]string
+	transactionMatches     map[string]TransactionMatch
+	exceptions             map[string]PaymentException
 	idempotency            map[string]idempotencyRecord
 
 	auditLogs map[string]AuditLog
@@ -45,6 +47,8 @@ func NewMemoryStore() *MemoryStore {
 		paymentRequests:        make(map[string]PaymentRequest),
 		stablecoinTransactions: make(map[string]StablecoinTransaction),
 		transactionBySignature: make(map[string]string),
+		transactionMatches:     make(map[string]TransactionMatch),
+		exceptions:             make(map[string]PaymentException),
 		idempotency:            make(map[string]idempotencyRecord),
 		auditLogs:              make(map[string]AuditLog),
 	}
@@ -387,7 +391,14 @@ func (s *MemoryStore) IngestStablecoinTransaction(_ context.Context, businessID,
 		CreatedAt: now,
 	})
 
-	return IngestStablecoinTransactionResult{StablecoinTransaction: transaction}, nil
+	match, exception := s.matchTransactionLocked(businessID, transaction.ID, now)
+	transaction = s.stablecoinTransactions[transaction.ID]
+
+	return IngestStablecoinTransactionResult{
+		StablecoinTransaction: transaction,
+		TransactionMatch:      match,
+		Exception:             exception,
+	}, nil
 }
 
 func (s *MemoryStore) ListStablecoinTransactions(_ context.Context, businessID string) ([]StablecoinTransaction, error) {
@@ -404,6 +415,87 @@ func (s *MemoryStore) ListStablecoinTransactions(_ context.Context, businessID s
 		return transactions[i].CreatedAt.After(transactions[j].CreatedAt)
 	})
 	return transactions, nil
+}
+
+func (s *MemoryStore) ListTransactionMatches(_ context.Context, businessID string) ([]TransactionMatch, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	matches := make([]TransactionMatch, 0)
+	for _, match := range s.transactionMatches {
+		if match.BusinessID == businessID {
+			matches = append(matches, match)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].CreatedAt.After(matches[j].CreatedAt)
+	})
+	return matches, nil
+}
+
+func (s *MemoryStore) ListExceptions(_ context.Context, businessID string) ([]PaymentException, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	exceptions := make([]PaymentException, 0)
+	for _, exception := range s.exceptions {
+		if exception.BusinessID == businessID {
+			exceptions = append(exceptions, exception)
+		}
+	}
+	sort.Slice(exceptions, func(i, j int) bool {
+		return exceptions[i].CreatedAt.After(exceptions[j].CreatedAt)
+	})
+	return exceptions, nil
+}
+
+func (s *MemoryStore) ResolveException(_ context.Context, businessID, actorID, exceptionID string, input ResolveExceptionInput) (PaymentException, error) {
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		return PaymentException{}, InvalidArgument("resolution reason is required")
+	}
+
+	now := time.Now().UTC()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	exception, ok := s.exceptions[exceptionID]
+	if !ok || exception.BusinessID != businessID {
+		return PaymentException{}, NotFound("exception not found")
+	}
+	if exception.Status == ExceptionStatusResolved {
+		return exception, nil
+	}
+
+	exception.Status = ExceptionStatusResolved
+	exception.ResolutionReason = reason
+	exception.ResolvedBy = actorID
+	exception.ResolvedAt = &now
+	s.exceptions[exception.ID] = exception
+
+	if exception.PaymentRequestID != "" {
+		paymentRequest := s.paymentRequests[exception.PaymentRequestID]
+		paymentRequest.Status = PaymentStatusManuallyResolved
+		paymentRequest.UpdatedAt = now
+		s.paymentRequests[paymentRequest.ID] = paymentRequest
+	}
+
+	s.appendAuditLocked(AuditLog{
+		ID:           newID("aud"),
+		BusinessID:   businessID,
+		ActorType:    "api_key",
+		ActorID:      actorID,
+		Action:       "exception.resolved",
+		ResourceType: "exception",
+		ResourceID:   exception.ID,
+		Metadata: map[string]string{
+			"type": exception.Type,
+		},
+		CreatedAt: now,
+	})
+
+	return exception, nil
 }
 
 func (s *MemoryStore) ListAuditLogs(_ context.Context, businessID string) ([]AuditLog, error) {
@@ -436,6 +528,183 @@ func (s *MemoryStore) findWalletForTransactionLocked(businessID, chain, destinat
 		}
 	}
 	return Wallet{}, false
+}
+
+func (s *MemoryStore) matchTransactionLocked(businessID, transactionID string, now time.Time) (*TransactionMatch, *PaymentException) {
+	transaction := s.stablecoinTransactions[transactionID]
+	if transaction.BusinessID != businessID || transaction.Status != TransactionStatusConfirmedOnchain {
+		return nil, nil
+	}
+
+	paymentTime := transaction.DetectedAt
+	if transaction.BlockTime != nil {
+		paymentTime = time.Unix(*transaction.BlockTime, 0).UTC()
+	}
+
+	activeCandidates := make([]PaymentRequest, 0)
+	expiredCandidates := make([]PaymentRequest, 0)
+	activeExact := make([]PaymentRequest, 0)
+	expiredExact := make([]PaymentRequest, 0)
+
+	for _, request := range s.paymentRequests {
+		if request.BusinessID != businessID ||
+			request.WalletID != transaction.WalletID ||
+			request.Chain != transaction.Chain ||
+			request.Token != transaction.Token ||
+			request.Status != PaymentStatusAwaitingPayment {
+			continue
+		}
+
+		compare, err := compareAmountStrings(transaction.Amount, request.Amount)
+		if err != nil {
+			continue
+		}
+
+		if paymentTime.After(request.ExpiresAt) {
+			expiredCandidates = append(expiredCandidates, request)
+			if compare == 0 {
+				expiredExact = append(expiredExact, request)
+			}
+			continue
+		}
+
+		activeCandidates = append(activeCandidates, request)
+		if compare == 0 {
+			activeExact = append(activeExact, request)
+		}
+	}
+
+	switch {
+	case len(activeExact) == 1:
+		match := s.createTransactionMatchLocked(activeExact[0], transaction, MatchStatusConfirmed, "amount, token, chain, wallet, and finality matched", now)
+		s.updatePaymentRequestStatusLocked(activeExact[0].ID, PaymentStatusConfirmed, now)
+		s.updateTransactionStatusLocked(transaction.ID, TransactionStatusMatchedToRequest)
+		return match, nil
+	case len(activeExact) > 1:
+		exception := s.createExceptionLocked(businessID, "", transaction.ID, ExceptionTypeAmbiguousMatch, "high", "multiple active payment requests match this transaction amount", now)
+		return nil, exception
+	case len(activeCandidates) == 1:
+		request := activeCandidates[0]
+		compare, err := compareAmountStrings(transaction.Amount, request.Amount)
+		if err != nil {
+			return nil, nil
+		}
+		if compare < 0 {
+			match := s.createTransactionMatchLocked(request, transaction, MatchStatusUnderpaid, "transaction amount is lower than payment request amount", now)
+			exception := s.createExceptionLocked(businessID, request.ID, transaction.ID, ExceptionTypeUnderpaid, "high", "transaction amount is lower than expected", now)
+			s.updatePaymentRequestStatusLocked(request.ID, PaymentStatusUnderpaid, now)
+			s.updateTransactionStatusLocked(transaction.ID, TransactionStatusMatchedToRequest)
+			return match, exception
+		}
+		if compare > 0 {
+			match := s.createTransactionMatchLocked(request, transaction, MatchStatusOverpaid, "transaction amount is higher than payment request amount", now)
+			exception := s.createExceptionLocked(businessID, request.ID, transaction.ID, ExceptionTypeOverpaid, "medium", "transaction amount is higher than expected", now)
+			s.updatePaymentRequestStatusLocked(request.ID, PaymentStatusOverpaid, now)
+			s.updateTransactionStatusLocked(transaction.ID, TransactionStatusMatchedToRequest)
+			return match, exception
+		}
+	case len(activeCandidates) > 1:
+		exception := s.createExceptionLocked(businessID, "", transaction.ID, ExceptionTypeAmbiguousMatch, "high", "multiple active payment requests could match this transaction", now)
+		return nil, exception
+	case len(expiredExact) == 1:
+		request := expiredExact[0]
+		match := s.createTransactionMatchLocked(request, transaction, MatchStatusExpired, "transaction matched after payment request expiry", now)
+		exception := s.createExceptionLocked(businessID, request.ID, transaction.ID, ExceptionTypeExpired, "medium", "transaction arrived after payment request expiry", now)
+		s.updatePaymentRequestStatusLocked(request.ID, PaymentStatusExpired, now)
+		s.updateTransactionStatusLocked(transaction.ID, TransactionStatusMatchedToRequest)
+		return match, exception
+	case len(expiredExact) > 1 || len(expiredCandidates) > 1:
+		exception := s.createExceptionLocked(businessID, "", transaction.ID, ExceptionTypeAmbiguousMatch, "medium", "multiple expired payment requests could match this transaction", now)
+		return nil, exception
+	case len(expiredCandidates) == 1:
+		request := expiredCandidates[0]
+		match := s.createTransactionMatchLocked(request, transaction, MatchStatusExpired, "transaction arrived after the only candidate payment request expired", now)
+		exception := s.createExceptionLocked(businessID, request.ID, transaction.ID, ExceptionTypeExpired, "medium", "transaction arrived after payment request expiry", now)
+		s.updatePaymentRequestStatusLocked(request.ID, PaymentStatusExpired, now)
+		s.updateTransactionStatusLocked(transaction.ID, TransactionStatusMatchedToRequest)
+		return match, exception
+	default:
+		exception := s.createExceptionLocked(businessID, "", transaction.ID, ExceptionTypeOrphan, "medium", "incoming transaction has no matching payment request", now)
+		s.updateTransactionStatusLocked(transaction.ID, TransactionStatusOrphan)
+		return nil, exception
+	}
+
+	return nil, nil
+}
+
+func (s *MemoryStore) createTransactionMatchLocked(request PaymentRequest, transaction StablecoinTransaction, status, reason string, now time.Time) *TransactionMatch {
+	match := TransactionMatch{
+		ID:                      newID("mat"),
+		BusinessID:              request.BusinessID,
+		PaymentRequestID:        request.ID,
+		StablecoinTransactionID: transaction.ID,
+		Status:                  status,
+		ExpectedAmount:          request.Amount,
+		ReceivedAmount:          transaction.Amount,
+		Reason:                  reason,
+		CreatedAt:               now,
+	}
+	s.transactionMatches[match.ID] = match
+	s.appendAuditLocked(AuditLog{
+		ID:           newID("aud"),
+		BusinessID:   request.BusinessID,
+		ActorType:    "system",
+		ActorID:      "matching_engine",
+		Action:       "transaction_match.created",
+		ResourceType: "transaction_match",
+		ResourceID:   match.ID,
+		Metadata: map[string]string{
+			"payment_request_id":        request.ID,
+			"stablecoin_transaction_id": transaction.ID,
+			"status":                    status,
+		},
+		CreatedAt: now,
+	})
+	return &match
+}
+
+func (s *MemoryStore) createExceptionLocked(businessID, paymentRequestID, transactionID, exceptionType, severity, reason string, now time.Time) *PaymentException {
+	exception := PaymentException{
+		ID:                      newID("exc"),
+		BusinessID:              businessID,
+		PaymentRequestID:        paymentRequestID,
+		StablecoinTransactionID: transactionID,
+		Type:                    exceptionType,
+		Status:                  ExceptionStatusOpen,
+		Severity:                severity,
+		Reason:                  reason,
+		CreatedAt:               now,
+	}
+	s.exceptions[exception.ID] = exception
+	s.appendAuditLocked(AuditLog{
+		ID:           newID("aud"),
+		BusinessID:   businessID,
+		ActorType:    "system",
+		ActorID:      "exception_engine",
+		Action:       "exception.created",
+		ResourceType: "exception",
+		ResourceID:   exception.ID,
+		Metadata: map[string]string{
+			"type":                      exceptionType,
+			"payment_request_id":        paymentRequestID,
+			"stablecoin_transaction_id": transactionID,
+		},
+		CreatedAt: now,
+	})
+	return &exception
+}
+
+func (s *MemoryStore) updatePaymentRequestStatusLocked(paymentRequestID, status string, now time.Time) {
+	request := s.paymentRequests[paymentRequestID]
+	request.Status = status
+	request.UpdatedAt = now
+	s.paymentRequests[paymentRequestID] = request
+}
+
+func (s *MemoryStore) updateTransactionStatusLocked(transactionID, status string) {
+	transaction := s.stablecoinTransactions[transactionID]
+	transaction.Status = status
+	s.stablecoinTransactions[transactionID] = transaction
 }
 
 func normalizePaymentRequestInput(input CreatePaymentRequestInput) (CreatePaymentRequestInput, error) {
@@ -566,6 +835,18 @@ func validateAmount(amount string) error {
 		return InvalidArgument("USDC amount supports at most 6 decimal places")
 	}
 	return nil
+}
+
+func compareAmountStrings(left, right string) (int, error) {
+	leftValue, ok := new(big.Rat).SetString(left)
+	if !ok {
+		return 0, InvalidArgument("left amount must be a decimal number")
+	}
+	rightValue, ok := new(big.Rat).SetString(right)
+	if !ok {
+		return 0, InvalidArgument("right amount must be a decimal number")
+	}
+	return leftValue.Cmp(rightValue), nil
 }
 
 func validateAddress(address string) error {

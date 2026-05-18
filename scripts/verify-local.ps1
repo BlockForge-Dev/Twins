@@ -168,7 +168,12 @@ $walletPayload = @{
 $wallet = Invoke-RestMethod -Method Post -Uri "$BaseUrl/v1/wallets" -Headers @{ Authorization = "Bearer $apiKey" } -ContentType "application/json" -Body $walletPayload
 
 Write-Step "Creating local USDC payment request"
-$expiresAt = [DateTime]::UtcNow.AddDays(1).ToString("yyyy-MM-ddTHH:mm:ssZ")
+$fixture = Get-Content -Raw -Path $FixturePath | ConvertFrom-Json
+$fixtureTime = [DateTimeOffset]::FromUnixTimeSeconds([int64]$fixture.blockTime).UtcDateTime
+if ($fixtureTime -lt [DateTime]::UtcNow) {
+    $fixtureTime = [DateTime]::UtcNow
+}
+$expiresAt = $fixtureTime.AddDays(1).ToString("yyyy-MM-ddTHH:mm:ssZ")
 $paymentRequestPayload = @{
     wallet_id   = $wallet.wallet.id
     customer_id = "cust_local_verify"
@@ -221,14 +226,39 @@ if ($storedTransactions.Count -ne 1) {
 }
 
 $tx = $storedTransactions[0]
-if ($tx.status -ne "confirmed_onchain") {
-    throw "Expected transaction status confirmed_onchain, got $($tx.status)"
+if ($tx.status -ne "matched_to_request") {
+    throw "Expected transaction status matched_to_request, got $($tx.status)"
 }
 if ($tx.token -ne "USDC") {
     throw "Expected token USDC, got $($tx.token)"
 }
 if ($tx.amount_atomic -ne "500000000") {
     throw "Expected amount_atomic 500000000, got $($tx.amount_atomic)"
+}
+
+$matchedRequests = Invoke-RestMethod -Method Get -Uri "$BaseUrl/v1/payment-requests" -Headers @{ Authorization = "Bearer $apiKey" }
+$matchedPaymentRequests = @($matchedRequests.payment_requests)
+if ($matchedPaymentRequests.Count -ne 1) {
+    throw "Expected 1 matched payment request, got $($matchedPaymentRequests.Count)"
+}
+$matchedRequest = $matchedPaymentRequests[0]
+if ($matchedRequest.status -ne "confirmed") {
+    throw "Expected matched payment request status confirmed, got $($matchedRequest.status)"
+}
+
+$matches = Invoke-RestMethod -Method Get -Uri "$BaseUrl/v1/transaction-matches" -Headers @{ Authorization = "Bearer $apiKey" }
+$storedMatches = @($matches.transaction_matches)
+if ($storedMatches.Count -ne 1) {
+    throw "Expected 1 transaction match, got $($storedMatches.Count)"
+}
+if ($storedMatches[0].status -ne "confirmed") {
+    throw "Expected transaction match status confirmed, got $($storedMatches[0].status)"
+}
+
+$exceptions = Invoke-RestMethod -Method Get -Uri "$BaseUrl/v1/exceptions" -Headers @{ Authorization = "Bearer $apiKey" }
+$storedExceptions = @($exceptions.exceptions)
+if ($storedExceptions.Count -ne 0) {
+    throw "Expected 0 exceptions for exact payment, got $($storedExceptions.Count)"
 }
 
 Write-Step "Verifying duplicate replay stays idempotent"
@@ -278,7 +308,7 @@ Write-Host "Server PID: $ListenerPid"
 Write-Host "Business:  $($business.business.id)"
 Write-Host "Wallet:    $($wallet.wallet.id)"
 Write-Host "API key:   $apiKey"
-Write-Host "Request:   $($paymentRequest.payment_request.id) [$($paymentRequest.payment_request.status)]"
+Write-Host "Request:   $($matchedRequest.id) [$($matchedRequest.status)]"
 Write-Host "Tx status: $($tx.status)"
 Write-Host "Signature: $($tx.signature)"
 Write-Host "Log file:  $ApiLog"
