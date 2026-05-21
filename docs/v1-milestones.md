@@ -105,6 +105,11 @@ Done means:
 
 ## Milestone 5: Receipt Timeline And Webhook Delivery
 
+Implementation:
+
+- [Milestone 5 README](milestones/milestone-5/README.md)
+- [Receipts and webhooks schema](../migrations/0004_milestone5_receipts_webhooks.sql)
+
 Build:
 
 - Receipt event timeline
@@ -124,6 +129,11 @@ Done means:
 - Businesses can replay webhooks after failure.
 
 ## Milestone 6: Reconciliation Dashboard And Export
+
+Implementation:
+
+- [Milestone 6 README](milestones/milestone-6/README.md)
+- [Reconciliation and exports schema](../migrations/0005_milestone6_reconciliation_exports.sql)
 
 Build:
 
@@ -145,6 +155,11 @@ Done means:
 - Finance or operations can close a day without manually checking a wallet explorer for every transaction.
 
 ## Milestone 7: Security And Multi-Tenant Readiness
+
+Implementation:
+
+- [Milestone 7 README](milestones/milestone-7/README.md)
+- [Security and multi-tenant schema](../migrations/0006_milestone7_security_multitenancy.sql)
 
 Build:
 
@@ -169,6 +184,11 @@ Done means:
 - There is a basic customer-facing security document.
 
 ## Milestone 8: Private Beta With Real Businesses
+
+Implementation:
+
+- [Milestone 8 README](milestones/milestone-8/README.md)
+- [Private beta schema](../migrations/0007_milestone8_private_beta.sql)
 
 Build or do:
 

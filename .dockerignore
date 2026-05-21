@@ -1,0 +1,9 @@
+.cache
+.git
+.github
+docs/validation/*.csv
+workers/solana-watcher/target
+target
+*.log
+*.tmp
+twins-data.json

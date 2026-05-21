@@ -36,6 +36,8 @@ A business creates a payment request, the customer sends USDC, Twins detects and
 - Non-custodial by design.
 - Developer-first APIs and webhooks.
 - Operator-ready receipts, exceptions, and reconciliation exports.
+- Security-ready tenant controls, scoped API keys, access logs, and incident records.
+- Private beta readiness tracking for design partners, usage metrics, and evidence.
 
 ## Core Flow
 
@@ -68,6 +70,11 @@ Exception is raised if there is a mismatch
 - [Milestone 2 API Guide](docs/api/milestone-2.md)
 - [Milestone 3 README](docs/milestones/milestone-3/README.md)
 - [Milestone 4 README](docs/milestones/milestone-4/README.md)
+- [Milestone 5 README](docs/milestones/milestone-5/README.md)
+- [Milestone 6 README](docs/milestones/milestone-6/README.md)
+- [Milestone 7 README](docs/milestones/milestone-7/README.md)
+- [Milestone 8 README](docs/milestones/milestone-8/README.md)
+- [Production Hosting Guide](docs/deployment/production.md)
 
 ## Run The API
 
@@ -81,6 +88,24 @@ Then open:
 http://localhost:8080/dashboard
 ```
 
+For durable local hosting, set a data path:
+
+```powershell
+$env:TWINS_DATA_PATH=".cache/twins-store.json"
+go run ./cmd/twins-api
+```
+
+For hosted production mode, also set a setup token:
+
+```powershell
+$env:TWINS_ENV="production"
+$env:TWINS_DATA_PATH=".cache/twins-store.json"
+$env:TWINS_BUSINESS_CREATION_TOKEN="replace-with-a-long-random-token"
+go run ./cmd/twins-api
+```
+
+See the [Production Hosting Guide](docs/deployment/production.md).
+
 ## Verify Locally
 
 Run the full local smoke test:
@@ -89,8 +114,8 @@ Run the full local smoke test:
 powershell -ExecutionPolicy Bypass -File scripts/verify-local.ps1
 ```
 
-This runs Go and Rust tests, starts the API on a free local port, creates a USDC payment request, posts verified Solana USDC fixture evidence from the Rust watcher into the Go API, confirms the payment through the matching engine, checks duplicate handling, and verifies the wrong-token rejection path.
-The dashboard shows business intent, on-chain evidence, transaction matches, and exceptions.
+This runs Go and Rust tests, starts the API on a free local port, creates a webhook subscription and USDC payment request, posts verified Solana USDC fixture evidence from the Rust watcher into the Go API, confirms the payment through the matching engine, checks receipt events and webhook delivery logs, creates a reconciliation run and CSV settlement export, verifies scoped API keys and security records, records private beta evidence, checks duplicate handling, and verifies the wrong-token rejection path.
+The dashboard shows business intent, on-chain evidence, transaction matches, receipt timeline events, webhook delivery logs, reconciliation runs, wallet snapshots, settlement rows, exports, exceptions, API keys, users, security policy, incidents, access logs, usage metrics, design partners, beta evidence, and private beta readiness.
 
 ## Start Here
 
@@ -110,3 +135,11 @@ For the first build milestone, use the [Milestone 2 README](docs/milestones/mile
 For the first chain milestone, use the [Milestone 3 README](docs/milestones/milestone-3/README.md).
 
 For matching and exceptions, use the [Milestone 4 README](docs/milestones/milestone-4/README.md).
+
+For receipts and webhooks, use the [Milestone 5 README](docs/milestones/milestone-5/README.md).
+
+For reconciliation and exports, use the [Milestone 6 README](docs/milestones/milestone-6/README.md).
+
+For security and multi-tenant readiness, use the [Milestone 7 README](docs/milestones/milestone-7/README.md).
+
+For private beta readiness, use the [Milestone 8 README](docs/milestones/milestone-8/README.md).

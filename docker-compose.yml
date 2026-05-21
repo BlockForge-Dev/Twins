@@ -1,0 +1,22 @@
+services:
+  twins-api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${TWINS_HOST_PORT:-8080}:8080"
+    environment:
+      TWINS_ENV: production
+      TWINS_HTTP_ADDR: ":8080"
+      TWINS_DATA_PATH: /data/twins-store.json
+      TWINS_BUSINESS_CREATION_TOKEN: ${TWINS_BUSINESS_CREATION_TOKEN:?set TWINS_BUSINESS_CREATION_TOKEN}
+    volumes:
+      - twins-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  twins-data:
